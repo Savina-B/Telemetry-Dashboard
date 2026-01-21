@@ -63,3 +63,5 @@ To make this repository public-safe:
 - File paths and helper utilities abstracted
 
 - Database connections replaced with flat-file examples
+
+<img width="1024" height="518" alt="image" src="https://github.com/user-attachments/assets/a0fe666d-6268-446c-bcd8-616f462948ed" />
