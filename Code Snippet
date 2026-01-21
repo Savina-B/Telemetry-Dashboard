@@ -1,0 +1,419 @@
+"""
+Telemetry Dashboard (Anonymised Snippet)
+
+Changes made for anonymisation:
+- Removed organisation name + logo references
+- Removed internal module/package structure (constants/utils/*)
+- Replaced data update + file paths with placeholders
+- Kept core UX + callback patterns: summary cards, app metrics grid, modal "User Actions",
+  time-series filtering, downloads, periodic refresh
+"""
+
+import os
+from datetime import date
+
+import dash
+import dash_bootstrap_components as dbc
+import dash_design_kit as ddk
+import dash_mantine_components as dmc
+from dash import Input, Output, State, callback, dcc, html, no_update, ctx
+import pandas as pd
+
+# -------------------------
+# App setup
+# -------------------------
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
+server = app.server
+app.title = "Telemetry Dashboard"
+
+# -------------------------
+# Placeholder data helpers
+# -------------------------
+DATA_DIR = os.path.join(os.getcwd(), "data")
+
+def read_server_stats():
+    # Replace with real source (e.g., DB/API). Keep schema stable.
+    return {
+        "server_name": "example.server.local",
+        "total_users": 0,
+        "licensed_users": 0,
+        "app_count": 0,
+    }
+
+def read_data_update_timestamp():
+    return f"Data last updated: {pd.Timestamp.utcnow().isoformat(timespec='seconds')}Z"
+
+def read_apps_grid_data():
+    # Replace with real source. Columns are representative.
+    path = os.path.join(DATA_DIR, "app_metrics.csv")
+    if os.path.exists(path):
+        return pd.read_csv(path).to_dict("records")
+    return []
+
+def get_app_views_timeseries(app_slug=None, dt_start=None, dt_end=None):
+    """
+    Return a dataframe with columns like:
+    ['timestamp','app_name','slug','username','views'].
+    """
+    path = os.path.join(DATA_DIR, "views_timeseries.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["timestamp", "app_name", "slug", "username", "views"])
+
+    df = pd.read_csv(path, parse_dates=["timestamp"])
+    if app_slug:
+        df = df[df["slug"] == app_slug]
+
+    if dt_start:
+        df = df[df["timestamp"].dt.date >= pd.to_datetime(dt_start).date()]
+    if dt_end:
+        df = df[df["timestamp"].dt.date <= pd.to_datetime(dt_end).date()]
+
+    return df
+
+def filter_views(df, include_users, usernames):
+    """include_users: 'include' or 'exclude' style flag; usernames: list"""
+    if not usernames:
+        return df
+    usernames = set(usernames)
+    if include_users == "include":
+        return df[df["username"].isin(usernames)]
+    return df[~df["username"].isin(usernames)]
+
+def datepicker_defaults():
+    today = date.today()
+    week_ago = today - pd.Timedelta(days=7)
+    return today, week_ago
+
+def views_plot(df):
+    # Minimal plotly-free placeholder: show table-like summary in graph slot if needed.
+    # Swap with plotly.graph_objects or plotly.express in your real app.
+    return {
+        "data": [],
+        "layout": {"title": "Views Over Time (placeholder)"},
+    }
+
+# -------------------------
+# Layout helpers (minimal)
+# -------------------------
+def timeseries_filter_card(id_prefix=""):
+    p = f"{id_prefix}-" if id_prefix else ""
+    today, week_ago = datepicker_defaults()
+
+    return ddk.Card(
+        children=[
+            ddk.CardHeader(title="Filters"),
+            html.Div(
+                style={"display": "flex", "gap": "12px", "alignItems": "center"},
+                children=[
+                    dcc.DatePickerRange(
+                        id=f"{p}date-picker-range",
+                        start_date=week_ago,
+                        end_date=today,
+                        max_date_allowed=today,
+                    ),
+                    dcc.RadioItems(
+                        id=f"{p}include-filter-bool",
+                        options=[
+                            {"label": "Include users", "value": "include"},
+                            {"label": "Exclude users", "value": "exclude"},
+                        ],
+                        value="include",
+                        inline=True,
+                    ),
+                    dcc.Dropdown(
+                        id=f"{p}usernames",
+                        options=[],
+                        multi=True,
+                        placeholder="Filter by usernames…",
+                        style={"minWidth": "260px"},
+                    ),
+                ],
+            ),
+        ]
+    )
+
+def simple_grid(id_):
+    # Use AG Grid or DataTable in your real version; kept lightweight for snippet.
+    return dash.dash_table.DataTable(
+        id=id_,
+        data=[],
+        columns=[],
+        page_size=10,
+        filter_action="native",
+        sort_action="native",
+        row_selectable="single",
+        style_table={"overflowX": "auto"},
+    )
+
+# -------------------------
+# App layout
+# -------------------------
+app.layout = dmc.MantineProvider(
+    ddk.App(
+        children=[
+            ddk.Header(
+                [
+                    ddk.Title("Telemetry Dashboard"),
+                    html.Div(
+                        style={"marginLeft": "auto", "display": "flex", "gap": "12px"},
+                        children=[
+                            html.Button("Download Code", id="download-code-btn"),
+                            html.Button("Launch User Actions View", id="open-user-modal"),
+                        ],
+                    ),
+                ],
+                style={"display": "flex", "alignItems": "center"},
+            ),
+
+            dbc.Modal(
+                [
+                    dbc.ModalHeader(dbc.ModalTitle("User Actions View"), close_button=False),
+                    dbc.ModalBody(
+                        [
+                            timeseries_filter_card(id_prefix="global"),
+                            ddk.Card(
+                                children=[
+                                    ddk.CardHeader(title="Views (All Apps)"),
+                                    dcc.Loading(simple_grid("timeseries-views-grid")),
+                                    html.Button("Download Data", id="timeseries-views-grid-dl-btn"),
+                                    dcc.Download(id="timeseries-views-grid-dl"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ],
+                id="user-modal",
+                size="xl",
+                is_open=False,
+            ),
+
+            ddk.Row(
+                [
+                    ddk.DataCard(width=25, label="Server Name", id="server-name"),
+                    ddk.DataCard(width=25, label="Total Users", id="total-users"),
+                    ddk.DataCard(width=25, label="Licensed Users", id="licensed-users"),
+                    ddk.DataCard(width=25, label="Number of Apps", id="server-apps"),
+                ]
+            ),
+
+            ddk.Row(
+                ddk.Card(
+                    html.P(
+                        "Click a row in the table to see app-level details, or open the User Actions view for cross-app activity."
+                    )
+                )
+            ),
+
+            ddk.Row(
+                [
+                    ddk.Card(
+                        width=100,
+                        children=[
+                            ddk.CardHeader(title="App Metrics", children=html.I(id="data-update-info")),
+                            dcc.Loading(simple_grid("apps-grid")),
+                            html.Button("Download Data", id="apps-grid-dl-btn"),
+                            dcc.Download(id="apps-grid-dl"),
+                        ],
+                    )
+                ]
+            ),
+
+            ddk.Block(
+                id="app-details-block",
+                width=100,
+                children=[
+                    ddk.SectionTitle(id="selected-app-name"),
+                    timeseries_filter_card(id_prefix="app"),
+                    ddk.Row(
+                        [
+                            ddk.Card(
+                                width=50,
+                                children=[
+                                    ddk.CardHeader(title="Views (Selected App)"),
+                                    dcc.Loading(simple_grid("app-timeseries-views-grid")),
+                                    html.Button("Download Data", id="app-timeseries-views-grid-dl-btn"),
+                                    dcc.Download(id="app-timeseries-views-grid-dl"),
+                                ],
+                            ),
+                            ddk.Card(
+                                width=50,
+                                children=[
+                                    ddk.CardHeader(title="Views Over Time"),
+                                    dcc.Loading(ddk.Graph(id="views-chart")),
+                                    dcc.Loading(
+                                        dmc.List(
+                                            id="viewers-list",
+                                            spacing=0,
+                                            size="xs",
+                                            style={"maxHeight": "300px", "overflowY": "auto"},
+                                        )
+                                    ),
+                                ],
+                            ),
+                        ]
+                    ),
+                ],
+            ),
+
+            dcc.Interval(id="interval-component", interval=300 * 1000, n_intervals=0),
+            dcc.Download(id="download-code"),
+        ],
+        show_editor=True,
+    )
+)
+
+# -------------------------
+# Callbacks
+# -------------------------
+@callback(
+    Output("app-details-block", "style"),
+    Output("selected-app-name", "children"),
+    Input("apps-grid", "selected_rows"),
+    State("apps-grid", "data"),
+)
+def display_app_details(selected_rows, rows):
+    if not selected_rows or not rows:
+        return {"display": "none"}, ""
+    row = rows[selected_rows[0]]
+    return {}, row.get("app_name", "Selected App")
+
+@callback(
+    Output("apps-grid", "data"),
+    Output("apps-grid", "columns"),
+    Output("data-update-info", "children"),
+    Input("interval-component", "n_intervals"),
+)
+def update_grid_data(n):
+    data = read_apps_grid_data()
+    cols = [{"name": c, "id": c} for c in (data[0].keys() if data else ["app_name", "views", "unique_views"])]
+    return data, cols, read_data_update_timestamp()
+
+@callback(
+    Output("global-date-picker-range", "max_date_allowed"),
+    Output("global-date-picker-range", "start_date"),
+    Output("global-date-picker-range", "end_date"),
+    Input("interval-component", "n_intervals"),
+)
+def update_datepicker(n):
+    today, week_ago = datepicker_defaults()
+    return today, week_ago, today
+
+@callback(
+    Output("timeseries-views-grid", "data"),
+    Output("timeseries-views-grid", "columns"),
+    Output("global-usernames", "options"),
+    Input("interval-component", "n_intervals"),
+    Input("global-date-picker-range", "start_date"),
+    Input("global-date-picker-range", "end_date"),
+    Input("global-include-filter-bool", "value"),
+    Input("global-usernames", "value"),
+)
+def update_global_grid(n, start, end, include_mode, usernames):
+    df = get_app_views_timeseries(dt_start=start, dt_end=end)
+    viewers = sorted(df["username"].dropna().unique().tolist()) if len(df) else []
+    if usernames:
+        df = filter_views(df, include_mode, usernames)
+
+    data = df.to_dict("records")
+    cols = [{"name": c, "id": c} for c in (df.columns.tolist() if len(df) else ["timestamp", "app_name", "username", "views"])]
+    return data, cols, viewers
+
+@callback(
+    Output("app-timeseries-views-grid", "data"),
+    Output("app-timeseries-views-grid", "columns"),
+    Output("usernames", "options"),
+    Output("views-chart", "figure"),
+    Output("viewers-list", "children"),
+    Input("apps-grid", "selected_rows"),
+    State("apps-grid", "data"),
+    Input("include-filter-bool", "value"),
+    Input("usernames", "value"),
+    Input("app-date-picker-range", "start_date"),
+    Input("app-date-picker-range", "end_date"),
+)
+def update_app_details(selected_rows, rows, include_mode, usernames, start, end):
+    if not selected_rows or not rows:
+        return [no_update] * 5
+
+    app_row = rows[selected_rows[0]]
+    slug = app_row.get("slug")
+
+    df = get_app_views_timeseries(app_slug=slug, dt_start=start, dt_end=end)
+    viewers = sorted(df["username"].dropna().unique().tolist()) if len(df) else []
+
+    if usernames:
+        df = filter_views(df, include_mode, usernames)
+
+    fig = views_plot(df)
+    viewer_list = [
+        dmc.ListItem(f"{u}") for u in df["username"].value_counts().head(50).index.tolist()
+    ] if len(df) else []
+
+    data = df.to_dict("records")
+    cols = [{"name": c, "id": c} for c in (df.columns.tolist() if len(df) else ["timestamp", "username", "views"])]
+    return data, cols, viewers, fig, viewer_list
+
+@callback(
+    Output("user-modal", "is_open"),
+    Input("open-user-modal", "n_clicks"),
+    State("user-modal", "is_open"),
+)
+def toggle_modal(n, is_open):
+    if n:
+        return True
+    return is_open
+
+@callback(
+    Output("total-users", "value"),
+    Output("licensed-users", "value"),
+    Output("server-apps", "value"),
+    Output("server-name", "value"),
+    Input("interval-component", "n_intervals"),
+)
+def update_datacards(n):
+    stats = read_server_stats()
+    return stats["total_users"], stats["licensed_users"], stats["app_count"], stats["server_name"]
+
+@callback(
+    Output("apps-grid-dl", "data"),
+    Input("apps-grid-dl-btn", "n_clicks"),
+    State("apps-grid", "data"),
+)
+def download_apps_grid(n, data):
+    if n and data:
+        return dcc.send_data_frame(pd.DataFrame(data).to_csv, "app_metrics.csv", index=False)
+    return no_update
+
+@callback(
+    Output("timeseries-views-grid-dl", "data"),
+    Input("timeseries-views-grid-dl-btn", "n_clicks"),
+    State("timeseries-views-grid", "data"),
+)
+def download_global_grid(n, data):
+    if n and data:
+        return dcc.send_data_frame(pd.DataFrame(data).to_csv, "apps_views.csv", index=False)
+    return no_update
+
+@callback(
+    Output("app-timeseries-views-grid-dl", "data"),
+    Input("app-timeseries-views-grid-dl-btn", "n_clicks"),
+    State("app-timeseries-views-grid", "data"),
+)
+def download_app_grid(n, data):
+    if n and data:
+        return dcc.send_data_frame(pd.DataFrame(data).to_csv, "app_views.csv", index=False)
+    return no_update
+
+@callback(
+    Output("download-code", "data"),
+    Input("download-code-btn", "n_clicks"),
+)
+def download_code(n):
+    if not n:
+        return no_update
+    # Replace with your zipped repo path when publishing.
+    return dcc.send_file(os.path.join("assets", "telemetry_dashboard.zip"))
+
+
+if __name__ == "__main__":
+    app.run_server(debug=True, port=8050)
